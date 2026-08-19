@@ -1,4 +1,4 @@
-PixiDraw copyright Antonio Stasio 2020 - astasio@gmail.com
+PixiDraw copyright Antonio Stasio 2020/2026 - astasio@gmail.com
 Sotto licenza GPL v3.
 
 per compilare:
