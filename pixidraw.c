@@ -1,9 +1,9 @@
-//copyright Antonio Stasio 2020 astasio@gmail.com
+//copyright Antonio Stasio 2020/2026 astasio@gmail.com
 #include<gtk/gtk.h>
 #include<math.h>
 
 char *title="PixiDraw";
-char *version="02/04/2020";
+char *version="19/08/2026";
 
 GtkWidget *win;
 GtkWidget *canvas;/*Cairo Canvas*/
@@ -23,7 +23,7 @@ int dim=24;
 
 int resolution(int dimension)
 {
-    int result;
+    int result=24;
  switch(dimension){
      case 8 : result=48;break;
      case 16: result=32;break;
@@ -128,6 +128,8 @@ void inizialize_img_buffer()
 
 static void clear_surface(void)
 {
+    if (!surface) return;
+
     cairo_t *cr;
     cr = cairo_create(surface);
  
@@ -145,121 +147,144 @@ static void clear_surface(void)
     }
     cairo_stroke(cr);
     cairo_destroy(cr);
-    
 }
 
 static gboolean 
 configure_event_cb (GtkWidget           *widget,
                     GdkEventConfigure   *event, 
-                        gpointer        data)
+                    gpointer            data)
 {
-    
-    cairo_surface_t *old_surface=surface;
-    cairo_t *cr;
+    if (surface) return TRUE;
     GdkWindow *window=gtk_widget_get_window(widget);
     surface = gdk_window_create_similar_surface(window,
                                            CAIRO_CONTENT_COLOR,
                                            dim*resolution(dim),dim*resolution(dim));
     clear_surface();    
-    if(old_surface){
-        //GdkWindow *gdk_window=gtk_widget_get_window(widget);
-        //cr = gdk_cairo_create(gdk_window);
-        cr = cairo_create(surface);
-        cairo_set_source_surface(cr,old_surface, 0, 0);
-        cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
-        cairo_paint(cr);
-        cairo_destroy(cr);
-        cairo_surface_destroy(old_surface);
-    } 
     return TRUE;
 }
 
 static void paint(GtkWidget *widget,cairo_t *cr, gpointer data)
 {
-    cairo_set_source_surface(cr, surface, 0, 0);
-    cairo_paint(cr);
+    if (surface){
+        cairo_set_source_surface(cr, surface, 0, 0);
+        cairo_paint(cr);
+    }
 }
 
 void nuovo_pixidraw(GtkWidget *widget, gpointer data)
 {
     inizialize_img_buffer();
     gtk_widget_set_size_request(GTK_WIDGET(canvas),dim*resolution(dim),dim*resolution(dim));
-    gtk_widget_set_visible(GTK_WIDGET(canvas),FALSE);   
-    gtk_widget_set_visible(GTK_WIDGET(canvas),TRUE);
-    clear_surface();
+
+    if (surface) {
+        cairo_surface_destroy(surface);
+        surface = NULL;
+    }
+    
+    GdkWindow *window = gtk_widget_get_window(canvas);
+    if (window) {
+        surface = gdk_window_create_similar_surface(window,
+                                                   CAIRO_CONTENT_COLOR,
+                                                   dim*resolution(dim),dim*resolution(dim));
+        clear_surface();
+    }
+
+    gtk_widget_queue_draw(canvas);
 }
 
-void draw_pixel(GtkWidget *widget,GdkEvent* event,gpointer data)
+void draw_pixel(GtkWidget *widget, GdkEvent *event, gpointer data)
 {
+    if (!surface) return;
+
     int x, y;
-    cairo_t *cr;
-    
-    float color_red,color_green,color_blue;
-    color_red=gtk_range_get_value(GTK_RANGE(red));
-    color_green=gtk_range_get_value(GTK_RANGE(green));
-    color_blue=gtk_range_get_value(GTK_RANGE(blue));
+    GdkModifierType state;
+    gboolean draw_mode = FALSE;
+    gboolean erase_mode = FALSE;
+
+    // Gestione dell'evento in base al tipo (Click o Motion)
+    if (event->type == GDK_BUTTON_PRESS) {
+        GdkEventButton *event_button = (GdkEventButton *)event;
+        x = event_button->x;
+        y = event_button->y;
+        if (event_button->button == 1) draw_mode = TRUE;
+        else if (event_button->button == 3) erase_mode = TRUE;
+    } else if (event->type == GDK_MOTION_NOTIFY) {
+        GdkEventMotion *event_motion = (GdkEventMotion *)event;
+        x = event_motion->x;
+        y = event_motion->y;
+        state = event_motion->state;
+        if (state & GDK_BUTTON1_MASK) draw_mode = TRUE;
+        else if (state & GDK_BUTTON3_MASK) erase_mode = TRUE;
+    }
+
+    if (!draw_mode && !erase_mode) return;
+
+    float color_red = gtk_range_get_value(GTK_RANGE(red));
+    float color_green = gtk_range_get_value(GTK_RANGE(green));
+    float color_blue = gtk_range_get_value(GTK_RANGE(blue));
     
     char color[7];/*COLORE IN FORMATO HTML*/
-    strcpy(color,"#");
-    strcat(color,convert_color_code(color_red));
-    strcat(color,convert_color_code(color_green));
-    strcat(color,convert_color_code(color_blue));
+    strcpy(color, "#");
+    strcat(color, convert_color_code(color_red));
+    strcat(color, convert_color_code(color_green));
+    strcat(color, convert_color_code(color_blue));
     
-    gtk_widget_get_pointer(widget,&x,&y);
-    GdkWindow *gdk_window=gtk_widget_get_window(widget);
-    cr = gdk_cairo_create(gdk_window);
-    
-    x=(x/resolution(dim))*resolution(dim);
-    y=(y/resolution(dim))*resolution(dim);
-    if(x > dim*resolution(dim)-resolution(dim) || y > dim*resolution(dim)-resolution(dim))
-    {
-       return;
+    x = (x / resolution(dim)) * resolution(dim);
+    y = (y / resolution(dim)) * resolution(dim);
+
+    if (x < 0 || y < 0 || x >= dim * resolution(dim) || y >= dim * resolution(dim)) {
+        return;
     }
-    else if(event->button.button==1)/*MOUSE CLICK SINISTRO*/
+
+    cairo_t *cr = cairo_create(surface);
+
+    if (draw_mode)/*DISEGNO*/
     {
-        cairo_set_source_rgb(cr,color_red,color_green,color_blue);
-        cairo_rectangle(cr,x,y,resolution(dim),resolution(dim));
+        cairo_set_source_rgb(cr, color_red, color_green, color_blue);
+        cairo_rectangle(cr, x, y, resolution(dim), resolution(dim));
         cairo_fill(cr);
-        cairo_destroy(cr);
-        int pos_in_array=(x/resolution(dim)+dim*y/resolution(dim));
-        strcpy(img_buffer[pos_in_array].color,color);/*MEMORIZZO IL CODICE COLORE NELL'ARRAY*/
-        img_buffer[pos_in_array].col=x/resolution(dim);/*MEMORIZZO LA COORDINATA Y NELL'ARRAY*/
-        img_buffer[pos_in_array].row=y/resolution(dim);/*MEMORIZZO LA COORDINATA X NELL'ARRAY*/
+
+        int pos_in_array = (x / resolution(dim) + dim * y / resolution(dim));
+        strcpy(img_buffer[pos_in_array].color, color);
+        img_buffer[pos_in_array].col = x / resolution(dim);
+        img_buffer[pos_in_array].row = y / resolution(dim);
     }
-    else if(event->button.button==3)/*MOUSE CLICK DESTRO*/
+    else if (erase_mode)/*GOMMA*/
     {
-        cairo_set_source_rgb(cr,0.5,0.5,0.5);
-        cairo_rectangle(cr,x,y,resolution(dim),resolution(dim));
+        cairo_set_source_rgb(cr, 0.5, 0.5, 0.5);
+        cairo_rectangle(cr, x, y, resolution(dim), resolution(dim));
         cairo_fill(cr);
-        cairo_set_source_rgb(cr,0.2,0.2,0.2);
-        cairo_rectangle(cr,x,y,resolution(dim),resolution(dim));
+        cairo_set_source_rgb(cr, 0.2, 0.2, 0.2);
+        cairo_rectangle(cr, x, y, resolution(dim), resolution(dim));
         cairo_stroke(cr);
-        cairo_destroy(cr);
-        int pos_in_array=(x/resolution(dim)+dim*y/resolution(dim));
-        strcpy(img_buffer[pos_in_array].color,"None");/*MEMORIZZO IL CODICE COLORE NELL'ARRAY*/
-        img_buffer[pos_in_array].col=x/resolution(dim);/*MEMORIZZO LA COORDINATA Y NELL'ARRAY*/
-        img_buffer[pos_in_array].row=y/resolution(dim);/*MEMORIZZO LA COORDINATA X NELL'ARRAY*/
+
+        int pos_in_array = (x / resolution(dim) + dim * y / resolution(dim));
+        strcpy(img_buffer[pos_in_array].color, "None");
+        img_buffer[pos_in_array].col = x / resolution(dim);
+        img_buffer[pos_in_array].row = y / resolution(dim);
     }
+
+    cairo_destroy(cr);
+    gtk_widget_queue_draw(widget);
+}
+
+GdkPixbuf *create_pixbuf(const gchar * filename)
+{
+    GdkPixbuf *pixbuf;
+    GError *error = NULL;
+    pixbuf = gdk_pixbuf_new_from_file(filename, &error);
+    if(!pixbuf) 
+    {
+        fprintf(stderr, "%s\n", error->message);
+        g_error_free(error);
+    }
+    return pixbuf;
 }
 
 void build_win()
 {
-	GdkPixbuf *create_pixbuf(const gchar * filename)
-    {
-        GdkPixbuf *pixbuf;
-        GError *error = NULL;
-        pixbuf = gdk_pixbuf_new_from_file(filename, &error);
-        if(!pixbuf) 
-        {
-            fprintf(stderr, "%s\n", error->message);
-            g_error_free(error);
-        }
-
-        return pixbuf;
-    }
-	
 	win=gtk_window_new(GTK_WINDOW_TOPLEVEL);
-	char titolo[29];
+	char titolo[32];
 	strcpy(titolo,title);
 	strcat(titolo," - versione: ");
 	strcat(titolo,version);
@@ -267,16 +292,17 @@ void build_win()
     gtk_window_set_icon(GTK_WINDOW(win), create_pixbuf("icon.xpm"));
     gtk_widget_set_size_request(win,600,450);
    	g_signal_connect(win,"destroy",G_CALLBACK(chiudi_app),NULL);
-	gtk_widget_show(win);
 	
-	GtkWidget *vbox=gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
+	GtkWidget *vbox=gtk_vbox_new(GTK_ORIENTATION_VERTICAL,0);
 	gtk_box_set_spacing(GTK_BOX(vbox),0);
 	gtk_container_add(GTK_CONTAINER(win),vbox);
 	gtk_container_set_border_width(GTK_CONTAINER(win),0);
+    gtk_box_set_homogeneous (GTK_BOX(vbox), 0);
     /* creazione toolbar */
 	GtkWidget *toolbar=gtk_toolbar_new();
 	gtk_toolbar_set_style(GTK_TOOLBAR(toolbar), GTK_TOOLBAR_BOTH);
 	gtk_box_pack_start(GTK_BOX(vbox),GTK_WIDGET(toolbar),0,0,0);
+
     /*pulsante nuovo disegno*/
 	nuovo = gtk_tool_button_new(gtk_image_new_from_icon_name (GTK_STOCK_NEW,48),"Nuovo Disegno");
     gtk_toolbar_insert(GTK_TOOLBAR(toolbar), GTK_TOOL_ITEM(nuovo), -1);
@@ -290,15 +316,17 @@ void build_win()
     /*pulsante informazioni*/
 	info = gtk_tool_button_new(gtk_image_new_from_icon_name (GTK_STOCK_HELP,48),"Informazioni");
     gtk_toolbar_insert(GTK_TOOLBAR(toolbar), GTK_TOOL_ITEM(info), -1);
-    //g_signal_connect(info,"clicked",G_CALLBACK(),NULL);
     /*pulsante chiudi applicazione*/
 	chiudi = gtk_tool_button_new(gtk_image_new_from_icon_name (GTK_STOCK_QUIT,48),"Chiudi");
     gtk_toolbar_insert(GTK_TOOLBAR(toolbar), GTK_TOOL_ITEM(chiudi), -1);
     g_signal_connect(chiudi,"clicked",G_CALLBACK(chiudi_app),NULL);
     /*FINE TOOLBAR */
+
     /*WIDGETS RISOLUZIONE E NOME FILE*/
-    GtkWidget *h1=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
-    gtk_container_add(GTK_CONTAINER(vbox),h1);
+    GtkBox *h1=gtk_hbox_new(GTK_ORIENTATION_HORIZONTAL,0);
+    gtk_container_add(GTK_CONTAINER(vbox),GTK_WIDGET(h1));
+    gtk_box_set_child_packing(GTK_BOX(vbox),GTK_WIDGET(h1),0,0,0,GTK_PACK_START);
+    gtk_box_set_homogeneous (GTK_BOX(h1), 0);
     
     GtkWidget *lbl_risoluzione=gtk_label_new("Imposta la risoluzione:");
     gtk_container_add(GTK_CONTAINER(h1),lbl_risoluzione);
@@ -315,17 +343,19 @@ void build_win()
     gtk_container_add(GTK_CONTAINER(h1),nome_file);
     gtk_box_set_child_packing(GTK_BOX(h1),nome_file,0,0,0,GTK_PACK_START);
     /*FINE WIDGET NOME FILE*/
-    GtkWidget *hbox=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
+    GtkWidget *hbox=gtk_hbox_new(GTK_ORIENTATION_HORIZONTAL,0);
 	gtk_box_set_spacing(GTK_BOX(hbox),5);
 	gtk_container_add(GTK_CONTAINER(vbox),hbox);
     gtk_box_set_child_packing(GTK_BOX(vbox),hbox,1,1,1,GTK_PACK_START);
 	gtk_container_set_border_width(GTK_CONTAINER(vbox),1);
+    gtk_box_set_homogeneous (GTK_BOX(hbox), 0);
     //BARRA A SINISTRA PER STRUMENTI E IMPOSTAZIONI//
-    GtkWidget *vb1=gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
+    GtkWidget *vb1=gtk_vbox_new(GTK_ORIENTATION_VERTICAL,0);
 	gtk_box_set_spacing(GTK_BOX(vb1),5);
 	gtk_container_add(GTK_CONTAINER(hbox),vb1);
 	gtk_container_set_border_width(GTK_CONTAINER(hbox),2);
     gtk_box_set_child_packing(GTK_BOX(hbox),vb1,0,0,0,GTK_PACK_START);
+    gtk_box_set_homogeneous (GTK_BOX(vb1), 0);
     //BARRA A PER I COLORI//
     GtkWidget *lbl1 = gtk_label_new("Regolazione Colore");
     gtk_container_add(GTK_CONTAINER(vb1),lbl1);
@@ -353,24 +383,25 @@ void build_win()
     blue=gtk_scale_new(GTK_ORIENTATION_HORIZONTAL,adjustment_blue);
     gtk_widget_set_size_request(GTK_WIDGET(blue),100,30);
     gtk_grid_attach(GTK_GRID(grid),blue,1,2,1,1);  
+    
     //FINE BARRA A SINISTRA//
 	//AREA DISEGNO//
  	GtkWidget *frame=gtk_frame_new("Area Disegno");
 	gtk_frame_set_shadow_type(GTK_FRAME(frame),GTK_SHADOW_OUT);
 	gtk_box_pack_start(GTK_BOX(hbox),frame,1,1,0);
 	gtk_box_set_child_packing(GTK_BOX(hbox),frame,TRUE,TRUE,0,GTK_PACK_START);
-
-	GtkWidget *scroll=gtk_scrolled_window_new(0,0);
-	gtk_container_add(GTK_CONTAINER(frame),scroll);
     
     canvas = gtk_drawing_area_new();
-    gtk_container_add(GTK_CONTAINER(scroll),canvas);
-    gtk_box_set_child_packing(GTK_BOX(scroll),canvas,1,1,1,GTK_PACK_START);
-    gtk_widget_add_events(canvas,GDK_BUTTON_PRESS_MASK);
+    gtk_container_add(GTK_CONTAINER(frame),canvas);
+    gtk_box_set_child_packing(GTK_BOX(frame),canvas,1,1,1,GTK_PACK_START);
+    
     g_signal_connect(canvas,"configure-event",G_CALLBACK(configure_event_cb),NULL);
     g_signal_connect(canvas,"draw",G_CALLBACK(paint),NULL);
     g_signal_connect(canvas,"button-press-event",G_CALLBACK(draw_pixel),NULL);
-    gtk_widget_set_events(canvas,gtk_widget_get_events(canvas)|GDK_BUTTON_PRESS_MASK);
+    g_signal_connect(canvas,"motion-notify-event",G_CALLBACK(draw_pixel),NULL);
+    
+    gtk_widget_add_events(canvas, GDK_BUTTON_PRESS_MASK | GDK_POINTER_MOTION_MASK);    
+
     //FINE AREA DISEGNO//
     //STATUSBAR IN FONDO//
 	GtkWidget *statusbar=gtk_statusbar_new();
@@ -379,7 +410,6 @@ void build_win()
     gtk_statusbar_push(GTK_STATUSBAR(statusbar),0,"PixiDraw");
     //FINE STATUSBAR//
 	gtk_widget_show_all(GTK_WIDGET(win));	
-    gtk_widget_set_visible(GTK_WIDGET(canvas),FALSE);
 }
 
 int main(int argc,char **argv)
